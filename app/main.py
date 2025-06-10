@@ -32,6 +32,6 @@ def translate(request: schemas.TranslationRequest):
 
     task = crud.create_translation_task(db, request.text, request.languages)
     background_tasks.add_task(perform_translation, task.id, request.text, request.languages, db)
-
+    print("Hello")   
     return{"task_id": {task.id}}
 
