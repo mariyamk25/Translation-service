@@ -1,8 +1,12 @@
-from sqlalchemy.orm import session
+# from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker, Session
+
+
+
 import models
 
 def create_translation_task(db: Session, text: str, Languages: list):
-    task = models.TranslationTask(text=text, Languages=Languages)
+    task = models.TranslationTask(text=text, languages=Languages)
     db.add(task)
     db.commit()
     db.refresh(task)
