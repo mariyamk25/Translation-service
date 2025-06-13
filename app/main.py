@@ -1,57 +1,122 @@
-
-import schemas
+import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Request, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 from fastapi.templating import Jinja2Templates
-from schemas import TranslationRequest
-import  crud
-from database import get_db, engine
-import models
 from fastapi.middleware.cors import CORSMiddleware
-from utily import perform_translation 
-models.Base.metadata.create_all(bind=engine)
+from sqlalchemy.orm import Session
+
+from schemas import TranslationRequestSchema
+from typing import List
+from utils import translate_text, process_translations
+
+# db related #  #
+from database import engine, SessionLocal, get_db
+import models 
+from models import TranslationRequest, TranslationResult, IndividualTranslations
+models.Base.metadata.create_all(engine)
+from dotenv import load_dotenv
+load_dotenv()
+import os
 app = FastAPI()
 
-templates =  Jinja2Templates(directory= "templates")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
-@app.get('/index', response_class=HTMLResponse)
-def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-) 
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=False,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
-@app.post("/translate", response_model=schemas.TaskResponse)
-def translate(request: schemas.TranslationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    print("str log-1", request.text, request.languages)
-    task = crud.create_translation_task(db, request.text, request.languages)
-    print(task.id)
-    background_tasks.add_task(perform_translation, task.id, request.text, request.languages, db)
+templates = Jinja2Templates(directory="templates")
 
-    return {"task_id":task.id}
+@app.get("/index", response_class=HTMLResponse)
+async def read_index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/translate/{task_id}", response_model=schemas.TranslationStatus)
-def get_translate(task_id: int, db: Session = Depends(get_db)):
-
-    task = crud.get_translation_task(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task not found")
-    return {"task_id": task_id, "status": task.status, "translation": task.translations}
-
-@app.get("/translate/content/{task_id}", response_model=schemas.TranslationStatus)
-def get_translate_content(task_id: int, db: Session = Depends(get_db)):
-
-    task = crud.get_translation_task(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task not found")
-    return {task}
+############################################################################
+############################################################################
+############################################################################
+############################################################################
 
 
+
+
+
+# @app.post("/translate")
+# async def translate(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+#     try:
+#         body = await request.json()
+#         logging.info(f"Received raw request body: {body}")
+#     except Exception as e:
+#         logging.error(f"Error parsing request body: {e}")
+#         raise HTTPException(status_code=400, detail="Invalid request body")
+    
+#     try:
+#         translation_request = TranslationRequestSchema(**body)
+#         logging.info(f"Validated request data: {translation_request.json()}")
+#     except Exception as e:
+#         logging.error(f"Error validating request data: {e}")
+#         raise HTTPException(status_code=422, detail="Unprocessable Entity")
+    
+#     # Convert the languages string to a list
+#     languages_list = [lang.strip() for lang in translation_request.languages.split(',')]
+    
+#     request_data = TranslationRequest(
+#         text=translation_request.text,
+#         languages=languages_list
+#     )
+#     db.add(request_data)
+#     db.commit()
+#     db.refresh(request_data)
+#     background_tasks.add_task(process_translations, request_data.id, translation_request.text, languages_list)
+#     return {"id": request_data.id, "status": request_data.status}
+
+
+@app.post("/translate")
+async def translate(request: TranslationRequestSchema, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    print(request.text)
+    print(request.languages)
+
+    # requests above is a pydantic model, my_dict below is a dict, incase you need to use one or another
+    # my_dict = request.dict()
+#     print(my_dict)
+    ########################################################
+    ########################################################
+
+    request_data = models.TranslationRequest(
+        text=request.text,
+        languages=request.languages)
+    db.add(request_data)
+    db.commit()
+    db.refresh(request_data)
+
+    background_tasks.add_task(process_translations, request_data.id, request.text, request.languages)
+    return {
+    "id": request_data.id,
+    "status": request_data.status,
+    "text": request_data.text,
+    "updated_at": request_data.updated_at,
+    "created_at": request_data.created_at,
+    "languages": request_data.languages,
+}
+
+
+
+
+############################################################################
+############################################################################
+############################################################################
+############################################################################
+@app.get("/translate/{request_id}")
+async def get_translation_status(request_id: int, request: Request, db: Session = Depends(get_db)):
+    request_obj = db.query(TranslationRequest).filter(TranslationRequest.id == request_id).first()
+    if not request_obj:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if request_obj.status == "in progress":
+        return {"status": request_obj.status}
+    translations = db.query(TranslationResult).filter(TranslationResult.request_id == request_id).all()
+    return templates.TemplateResponse("results.html", {"request": request, "translations": translations})
